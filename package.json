@@ -1,0 +1,13 @@
+{
+  "name": "w-world-room-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Máy chủ ghép phòng (signaling WebRTC) cho bản web W-World",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
