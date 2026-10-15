@@ -32,9 +32,47 @@ const MIME = {
   ".json": "application/json", ".css": "text/css", ".webmanifest": "application/manifest+json",
 };
 
+// ------------------------------------------------------------ TURN (tuỳ chọn)
+// Người chơi ở mạng chặn kết nối thẳng (nhiều mạng 4G/5G, mạng công ty) cần máy chủ TURN chuyển tiếp.
+// /ice trả danh sách máy chủ TURN cho game (mảng iceServers), lấy từ một trong hai nguồn (biến môi trường):
+//   CF_TURN_KEY_ID + CF_TURN_API_TOKEN : Cloudflare Realtime TURN (gói miễn phí), tạo thông tin đăng nhập tạm
+//   TURN_API_URL                       : địa chỉ GET trả về mảng iceServers (vd. API của Metered.ca)
+// Không đặt gì: trả [] (game chỉ dùng STUN).
+let iceCache = { at: 0, list: [] };
+async function iceServers() {
+  if (Date.now() - iceCache.at < 3600e3) return iceCache.list;
+  let data = null;
+  const cfId = process.env.CF_TURN_KEY_ID, cfToken = process.env.CF_TURN_API_TOKEN;
+  if (cfId && cfToken) {
+    const r = await fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfId}/credentials/generate-ice-servers`, {
+      method: "POST", headers: { Authorization: `Bearer ${cfToken}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ ttl: 86400 }),
+    });
+    if (!r.ok) throw new Error("Cloudflare TURN: HTTP " + r.status);
+    data = await r.json();
+  } else if (process.env.TURN_API_URL) {
+    const r = await fetch(process.env.TURN_API_URL);
+    if (!r.ok) throw new Error("TURN_API_URL: HTTP " + r.status);
+    data = await r.json();
+  }
+  let list = [];
+  if (Array.isArray(data)) list = data;
+  else if (data && Array.isArray(data.iceServers)) list = data.iceServers;
+  else if (data && data.iceServers) list = [data.iceServers];
+  iceCache = { at: Date.now(), list };
+  return list;
+}
+
 // ------------------------------------------------------------ phục vụ file tĩnh
 const server = http.createServer((req, res) => {
   let p = decodeURIComponent((req.url || "/").split("?")[0]);
+  if (p === "/ice") {
+    const head = { "Content-Type": "application/json", "Cache-Control": "no-store",
+      "Access-Control-Allow-Origin": "*", "Cross-Origin-Resource-Policy": "cross-origin" };
+    iceServers().then((list) => { res.writeHead(200, head); res.end(JSON.stringify(list)); })
+      .catch((e) => { console.log("ice:", e.message); res.writeHead(200, head); res.end("[]"); });
+    return;
+  }
   // chạy riêng làm máy chủ phòng (không kèm bản web, vd. trên Render): trang chủ chỉ báo đang chạy,
   // cũng là chỗ game gọi để đánh thức máy chủ khi nó đang ngủ
   if ((p === "/" || p === "") && !fs.existsSync(path.join(WEB, "index.html"))) {
