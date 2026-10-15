@@ -4,6 +4,8 @@
 // Logic game chạy ở trình duyệt chủ phòng; dữ liệu game đi thẳng giữa các trình duyệt (WebRTC).
 //
 //   node tools/server/server.js [--port 8080] [--web build/web]
+// Không có --web: dùng thư mục web/ cạnh server.js nếu có (bản trên Render, do build.js tải về), không thì build/web.
+// File nào có bản nén sẵn <tên>.gz (build.js tạo) thì gửi bản nén cho trình duyệt nhận gzip.
 //
 // Đặt sau proxy có HTTPS (Caddy, nginx, Render, Railway, Fly…) để trình duyệt dùng wss:// — WebRTC cần trang https.
 // Giao thức giống tools/server/signaling.gd (xem chú thích ở đó).
@@ -19,14 +21,15 @@ const arg = (name, def) => {
   return i >= 0 && args[i + 1] ? args[i + 1] : def;
 };
 const PORT = parseInt(process.env.PORT || arg("port", "8080"), 10);
-const WEB = path.resolve(arg("web", path.join(__dirname, "..", "..", "build", "web")));
+const LOCAL_WEB = path.join(__dirname, "web");
+const WEB = path.resolve(arg("web", fs.existsSync(path.join(LOCAL_WEB, "index.html")) ? LOCAL_WEB : path.join(__dirname, "..", "..", "build", "web")));
 const MAX_LIMIT = 10;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "application/javascript", ".wasm": "application/wasm",
   ".pck": "application/octet-stream", ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon",
-  ".json": "application/json", ".css": "text/css",
+  ".json": "application/json", ".css": "text/css", ".webmanifest": "application/manifest+json",
 };
 
 // ------------------------------------------------------------ phục vụ file tĩnh
@@ -45,15 +48,27 @@ const server = http.createServer((req, res) => {
   if (!file.startsWith(WEB)) { res.writeHead(403); return res.end(); }
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); return res.end("not found"); }
-    res.writeHead(200, {
+    // trình duyệt đã có bản này (ETag khớp) -> 304, khỏi tải lại hàng chục MB
+    const etag = `"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+    const headers = {
       "Content-Type": MIME[path.extname(file)] || "application/octet-stream",
-      "Content-Length": st.size,
       // cho phép bản web dùng SharedArrayBuffer nếu sau này bật đa luồng
       "Cross-Origin-Opener-Policy": "same-origin",
       "Cross-Origin-Embedder-Policy": "require-corp",
       "Cache-Control": "no-cache",
+      "ETag": etag,
+      "Vary": "Accept-Encoding",
+    };
+    if (req.headers["if-none-match"] === etag) { res.writeHead(304, headers); return res.end(); }
+    const gz = file + ".gz";
+    fs.stat(gz, (gerr, gst) => {
+      const useGz = !gerr && gst.isFile() && /\bgzip\b/.test(req.headers["accept-encoding"] || "");
+      headers["Content-Length"] = useGz ? gst.size : st.size;
+      if (useGz) headers["Content-Encoding"] = "gzip";
+      res.writeHead(200, headers);
+      if (req.method === "HEAD") return res.end();
+      fs.createReadStream(useGz ? gz : file).pipe(res);
     });
-    fs.createReadStream(file).pipe(res);
   });
 });
 

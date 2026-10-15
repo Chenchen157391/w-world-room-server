@@ -2,9 +2,10 @@
   "name": "w-world-room-server",
   "version": "1.0.0",
   "private": true,
-  "description": "Máy chủ ghép phòng (signaling WebRTC) cho bản web W-World",
+  "description": "Máy chủ W-World: phục vụ bản web + ghép phòng (signaling WebRTC)",
   "main": "server.js",
   "scripts": {
+    "build": "node build.js",
     "start": "node server.js"
   },
   "engines": {
